@@ -1,0 +1,6 @@
+{
+  "global": {
+    "ctrl-shift-d": "mod.open:github-diff",
+    "cmd-shift-d": "mod.open:github-diff"
+  }
+}
