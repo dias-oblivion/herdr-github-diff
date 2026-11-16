@@ -76,16 +76,32 @@ export const headCommit = (repo) => line(repo, ["rev-parse", "--verify", "--quie
 // The last `limit` commits on HEAD, newest first, for the sidebar's Commits tab. `own` marks the
 // ones the branch added since it left `base` (none when base is HEAD itself or the empty tree).
 export async function recentCommits(repo, base, limit = 40) {
-  const out = await git(repo, ["log", `--max-count=${limit}`, "--format=%x1e%H%x1f%h%x1f%s%x1f%an%x1f%ar", "HEAD", "--"]).catch(() => "");
+  const out = await git(repo, ["log", `--max-count=${limit}`, `--date=format:${DATE_FORMAT}`, `--format=%x1e${COMMIT_FIELDS}`, "HEAD", "--"]).catch(() => "");
   let own = new Set();
   if (base && base !== EMPTY_TREE && base !== "HEAD" && !isOption(base)) {
     const ids = await git(repo, ["rev-list", "--max-count=500", `${base}..HEAD`, "--"]).catch(() => "");
     own = new Set(ids.split("\n").filter(Boolean));
   }
   return out.split("\x1e").filter((record) => record.trim()).map((record) => {
-    const [sha, short, subject, author, date] = record.trim().split("\x1f");
-    return { sha, short, subject, author, date, own: own.has(sha) };
+    const commit = parseCommit(record);
+    return { ...commit, own: own.has(commit.sha) };
   });
+}
+
+// One commit's message and authorship, for the card above its diff.
+export async function commitInfo(repo, sha) {
+  if (!sha || isOption(sha)) return null;
+  const out = await git(repo, ["show", "-s", `--date=format:${DATE_FORMAT}`, `--format=${COMMIT_FIELDS}`, sha, "--"]).catch(() => null);
+  return out ? parseCommit(out) : null;
+}
+
+// The fields both read, the body last since it may span lines.
+const DATE_FORMAT = "%d %b %Y, %H:%M";
+const COMMIT_FIELDS = "%H%x1f%h%x1f%s%x1f%an%x1f%ar%x1f%ae%x1f%ad%x1f%p%x1f%b";
+
+function parseCommit(record) {
+  const [sha, short, subject, author, date, email, when, parents, ...body] = record.replace(/^\s+/, "").split("\x1f");
+  return { sha, short, subject, author, date, email, when, parents: (parents ?? "").split(" ").filter(Boolean), body: body.join("\x1f").trim() };
 }
 
 // Commits in base..head, newest first, with lines added and removed.

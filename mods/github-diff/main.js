@@ -249,6 +249,16 @@ export default class SnappyDiff extends View {
     const rev = ++this.rev;
     const started = Date.now();
     this.source = source;
+    // A commit on screen gets a card with its message and authorship above the diff.
+    if (source.commit !== this.commitInfo?.sha) this.commitInfo = null;
+    if (source.commit && !this.commitInfo) {
+      cx.spawn(async (cx) => {
+        const info = await git.commitInfo(source.repo, source.commit);
+        if (this.source !== source) return;
+        this.commitInfo = info;
+        cx.notify();
+      });
+    }
     this.loading = true;
     this.error = null;
     cx.notify();
@@ -1331,7 +1341,7 @@ export default class SnappyDiff extends View {
       .on_click((_e, cx) => pick(cx))
       .child(div().mt(6).size(8).flex_none().rounded(4).bg(dot))
       .child(v_flex().flex_1().min_w(0).gap(2)
-        .child(div().truncate().text_size(12.5).text_color(t.foreground).child(title))
+        .child(typeof title === "string" ? div().truncate().text_size(12.5).text_color(t.foreground).child(title) : title)
         .child(detail));
     const dim = (text) => div().truncate().text_size(11).text_color(t.dim).child(text);
     const label = (text) => div().px(16).pt(12).pb(4).text_size(11).font_medium().text_color(t.dim).child(text);
@@ -1345,11 +1355,45 @@ export default class SnappyDiff extends View {
     const anyOwn = this.recent.some((c) => c.own);
     this.recent.forEach((c, i) => {
       if (anyOwn && !c.own && (i === 0 || this.recent[i - 1].own)) rows.push(label("Before this branch"));
-      rows.push(entry(c.sha, c.subject, h_flex().min_w(0).gap(6).text_size(11).text_color(t.dim)
+      // A commit with a description gets GitHub's "…" mark; hovering shows the whole message.
+      const title = h_flex().min_w(0).gap(6).items_center()
+        .child(div().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(c.subject))
+        .when(Boolean(c.body), (el) => el.child(h_flex().flex_none().h(15).px(4).items_center().rounded(4).border_1().border_color(t.border)
+          .bg(t.raised).text_size(11).font_semibold().text_color(t.muted).child("···")));
+      const detail = h_flex().min_w(0).gap(6).text_size(11).text_color(t.dim)
         .child(div().flex_none().font_family(this.code).child(c.short))
-        .child(div().min_w(0).truncate().child(`${c.author} · ${c.date}`)), c.own ? t.gh.blue : t.border, (cx) => this.showCommit(c.sha, cx)));
+        .child(div().min_w(0).truncate().child(div().text_color(t.muted).child(c.author)))
+        .child(div().flex_none().child(`· ${c.date}`));
+      const tooltip = [c.subject, c.body, `${c.author} <${c.email}> · ${c.when}`].filter(Boolean).join("\n\n");
+      rows.push(entry(c.sha, title, detail, c.own ? t.gh.blue : t.border, (cx) => this.showCommit(c.sha, cx)).tooltip(tooltip));
     });
     return v_flex().id("commits-list").flex_1().min_h(0).overflow_y_scrollbar().py(6).gap(1).children(rows);
+  }
+
+  // GitHub's commit page header, above a commit's diff: the subject, the description, then who
+  // made it and when, with the commit and parent ids. A long description scrolls in its box.
+  renderCommitCard(t, code) {
+    const c = this.commitInfo;
+    const initials = c.author.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
+    const lines = c.body ? c.body.split("\n") : [];
+    const mono = (text) => div().font_family(code).text_size(12).child(text);
+    return div().px(CARD_MX).pt(16).flex_none()
+      .child(v_flex().rounded(CARD_R).border_1().border_color(t.border).bg(t.gh.subtle)
+        .child(v_flex().px(16).pt(14).pb(12).gap(8)
+          .child(div().text_size(15).font_semibold().text_color(t.foreground).child(c.subject))
+          .when(lines.length > 0, (el) => el.child(v_flex().id("commit-body").max_h(180).overflow_y_scrollbar().gap(0)
+            .children(lines.map((text) => div().min_h(18).font_family(code).text_size(12.5).text_color(t.muted).child(text || " "))))))
+        .child(h_flex().px(16).py(10).gap(10).items_center().border_t_1().border_color(t.border).rounded_b(CARD_R - 1).bg(t.background)
+          .text_size(12.5).text_color(t.muted)
+          .child(div().size(22).flex_none().flex().items_center().justify_center().rounded(11).bg(t.raised).text_size(10).font_semibold().text_color(t.foreground).child(initials))
+          .child(div().font_semibold().text_color(t.foreground).child(c.author))
+          .child(div().min_w(0).truncate().child(`<${c.email}> committed ${c.date} · ${c.when}`))
+          .child(div().flex_1())
+          .child(h_flex().flex_none().gap(6).items_center()
+            .child(div().text_color(t.dim).child("commit")).child(mono(c.short))
+            .when(c.parents.length > 0, (el) => el
+              .child(div().text_color(t.dim).child(c.parents.length > 1 ? "· parents" : "· parent"))
+              .children(c.parents.map((p) => mono(p)))))));
   }
 
   renderFiles(t, active) {
@@ -1416,6 +1460,7 @@ export default class SnappyDiff extends View {
           .hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.showAll(cx))
           .child(this.files.length === 1 ? "Show the whole diff" : `Show all ${this.files.length} files`).child(div().text_color(t.dim).child("esc")))))
       .when(this.files.length > 0, (el) => el
+        .when(Boolean(this.source?.commit && this.commitInfo), (el) => el.child(this.renderCommitCard(t, code)))
         .child(div().id("diff-wrap").flex_1().min_h(0).relative()
           .on_mouse_down("left", (e) => {
             if (e.local_position) this.press = { x: unzoom(e.local_position.x), shift: e.modifiers.shift };
