@@ -1,0 +1,4 @@
+# Written into a mod folder by Herdr itself (herdr-app check, the running app); not part of the mod.
+mods/*/jsconfig.json
+mods/*/gpui-kit.d.ts
+mods/*/herdr.d.ts

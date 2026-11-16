@@ -10,7 +10,7 @@ const PREFS = `${DIR}/prefs.json`;
 const LAST_REVIEWED = `${DIR}/last-reviewed.json`; // "repo:base...head" -> the head commit you last reviewed
 
 // Local patch (not upstream): unified like GitHub's default, and VS Code, the editor here.
-export const DEFAULT_PREFS = { diffStyle: "unified", sidebar: true, editor: "vscode", wholeFiles: false };
+export const DEFAULT_PREFS = { diffStyle: "unified", sidebar: true, sidebarTab: "files", editor: "vscode", wholeFiles: false };
 
 async function readJson(path, fallback) {
   try { return { ...fallback, ...JSON.parse(await fs.readFile(path, "utf8")) }; } catch { return fallback; }

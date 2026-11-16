@@ -9,6 +9,9 @@ Um visualizador de diff para o [Herdr app](https://herdr.dev) com a cara da aba 
 - **Todos os arquivos numa rolagem só**, cada um num cartão com borda e cantos arredondados, como no GitHub. O cabeçalho do arquivo atual fica preso no topo enquanto você rola.
 - **Começa no que não foi commitado** (`HEAD` → `Working tree`), com os arquivos novos inclusos. Sem nada a commitar, mostra a branch inteira como uma PR, contra a branch de onde ela saiu (`homolog` ou `develop` num repo que integra lá, senão `main`). Pelo seletor de base no topo você troca entre os dois.
 - **Cores e fonte do GitHub**: verde e vermelho do GitHub nas linhas, as palavras que mudaram em destaque, sintaxe colorida com a paleta do GitHub, tema claro ou escuro conforme o Herdr. O código usa uma fonte monoespaçada sem ligaduras (`===` e `=>` aparecem como foram digitados).
+- **Aba Commits** na lateral (`c` alterna com a aba Files): **Uncommitted changes**, **Whole branch vs homolog** (tudo desde que a branch saiu da base, como uma PR) e os últimos 40 commits da worktree. Os commits da própria branch têm um ponto azul, e uma linha marca onde a branch começou. Clique num commit para ver só o diff dele; o ✕ no chip do commit, no topo, volta para o que não foi commitado. Quando o agente commita, a lista se atualiza sozinha.
+
+  ![Aba Commits](preview-commits.png)
 - **Unified por padrão**, como no GitHub; um botão na barra troca para split (lado a lado).
 - **Marcar como visto** (`v`): o arquivo recolhe e volta sozinho se mudar de novo.
 - **Comentários nas linhas** (clique no número da linha) e **Send to agent**, que manda todos para o agente que está trabalhando naquela branch dentro do Herdr.
@@ -58,9 +61,10 @@ Foque um terminal que esteja dentro de um repositório git (pode ser uma worktre
 | `o` | abre o arquivo no editor |
 | `ctrl-k` | ir para arquivo, commit ou PR |
 | `ctrl-f` | buscar texto no diff |
-| `ctrl-b` | mostrar / esconder a árvore de arquivos |
+| `c` | alterna entre as abas Files e Commits |
+| `ctrl-b` | mostrar / esconder a barra lateral |
 | `?` | configurações (unified/split, editor, arquivos inteiros) |
-| `esc` | fecha |
+| `esc` ou ✕ | fecha (o ✕ fica no canto direito da barra superior) |
 
 No macOS, use `cmd` no lugar de `ctrl`.
 

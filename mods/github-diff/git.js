@@ -70,6 +70,24 @@ export async function refs(repo) {
   return out.split("\n").filter((r) => r && !r.endsWith("/HEAD")).map((r) => r.split("/").slice(2).join("/"));
 }
 
+// HEAD's commit id, or null in a repository without commits.
+export const headCommit = (repo) => line(repo, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+
+// The last `limit` commits on HEAD, newest first, for the sidebar's Commits tab. `own` marks the
+// ones the branch added since it left `base` (none when base is HEAD itself or the empty tree).
+export async function recentCommits(repo, base, limit = 40) {
+  const out = await git(repo, ["log", `--max-count=${limit}`, "--format=%x1e%H%x1f%h%x1f%s%x1f%an%x1f%ar", "HEAD", "--"]).catch(() => "");
+  let own = new Set();
+  if (base && base !== EMPTY_TREE && base !== "HEAD" && !isOption(base)) {
+    const ids = await git(repo, ["rev-list", "--max-count=500", `${base}..HEAD`, "--"]).catch(() => "");
+    own = new Set(ids.split("\n").filter(Boolean));
+  }
+  return out.split("\x1e").filter((record) => record.trim()).map((record) => {
+    const [sha, short, subject, author, date] = record.trim().split("\x1f");
+    return { sha, short, subject, author, date, own: own.has(sha) };
+  });
+}
+
 // Commits in base..head, newest first, with lines added and removed.
 export async function commits(repo, base, head) {
   if (!head || base === EMPTY_TREE || isOption(base) || isOption(head)) return [];

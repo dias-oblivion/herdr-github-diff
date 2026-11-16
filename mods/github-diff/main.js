@@ -56,7 +56,7 @@ const EDITORS = { zed: "Zed", vscode: "VS Code", cursor: "Cursor" };
 const GH = {
   dark: {
     canvas: "#0d1117", subtle: "#161b22", border: "#30363d", fg: "#e6edf3", muted: "#8b949e", num: "#6e7681",
-    hover: "#b1bac41f", sel: "#6e768140", raised: "#21262d", accent: "#2f81f7", solid: "#238636",
+    hover: "#b1bac41f", sel: "#6e768140", raised: "#21262d", accent: "#2f81f7", solid: "#238636", tab: "#f78166",
     green: "#3fb950", red: "#f85149", yellow: "#d29922", blue: "#58a6ff",
     add: { bg: "#2ea04326", num: "#3fb9504d", word: "#2ea04366" },
     del: { bg: "#f851491a", num: "#f851494d", word: "#f8514966" },
@@ -66,7 +66,7 @@ const GH = {
   },
   light: {
     canvas: "#ffffff", subtle: "#f6f8fa", border: "#d0d7de", fg: "#1f2328", muted: "#656d76", num: "#6e7781",
-    hover: "#d0d7de52", sel: "#d0d7de80", raised: "#f6f8fa", accent: "#0969da", solid: "#1f883d",
+    hover: "#d0d7de52", sel: "#d0d7de80", raised: "#f6f8fa", accent: "#0969da", solid: "#1f883d", tab: "#fd8c73",
     green: "#1a7f37", red: "#d1242f", yellow: "#9a6700", blue: "#0969da",
     add: { bg: "#e6ffec", num: "#ccffd8", word: "#abf2bc" },
     del: { bg: "#ffebe9", num: "#ffd7d5", word: "#ff818266" },
@@ -147,6 +147,10 @@ export default class SnappyDiff extends View {
     this.overview = false;
     this.overviewPrefix = ""; // the folder the overview's "where" panel is in
     this.churn = new Map(); // path -> commits of the range that touched it
+    this.recent = []; // the Commits tab: the last commits on HEAD, newest first
+    this.recentHead = null; // the HEAD that list was read at
+    this.recentRepo = null;
+    this.forkBase = null; // the branch HEAD forked from, for "Whole branch" and own-commit marks
 
     this.code = codeFont();
     this.handle = cx.focus_handle();
@@ -193,7 +197,14 @@ export default class SnappyDiff extends View {
     const [base, branch, dirty, refs] = await Promise.all([git.defaultBase(repo), git.currentBranch(repo), git.isDirty(repo), git.refs(repo)]);
     this.refs = refs;
     this.branch = branch;
+    this.forkBase = base;
+    this.recentRepo = repo;
+    this.loadRecent(cx);
     if (given.pr) return this.openPullRequest(repo, given.pr, cx);
+    // { repo, commit }: one commit on its own, as the Commits tab opens it.
+    if (given.commit && !String(given.commit).startsWith("-")) {
+      return this.load({ repo, base: "HEAD", head: "", commit: String(given.commit), ignoreWhitespace: false }, cx);
+    }
     // With uncommitted work, show it on top of the branch; otherwise the branch, like a PR.
     const head = given.head ?? (dirty || base === git.EMPTY_TREE ? "" : branch);
     // Local patch (not upstream): with uncommitted work, show only that by default (the
@@ -348,7 +359,56 @@ export default class SnappyDiff extends View {
     cx.notify();
   }
 
+  // The Commits tab's list, read again only when HEAD moves (an agent committed), so the
+  // refresh tick costs one rev-parse while the tab is shown.
+  loadRecent(cx) {
+    const repo = this.recentRepo;
+    if (!repo || this.loadingRecent) return;
+    this.loadingRecent = true;
+    cx.spawn(async (cx) => {
+      try {
+        const head = await git.headCommit(repo);
+        if (head === this.recentHead && this.recent.length) return;
+        this.recent = head ? await git.recentCommits(repo, this.forkBase) : [];
+        this.recentHead = head;
+        cx.notify();
+      } finally {
+        this.loadingRecent = false;
+      }
+    });
+  }
+
+  // What the Commits tab's entries open: uncommitted work, the whole branch, or one commit.
+  showWorkingTree(cx) { this.reload({ base: "HEAD", head: "", commit: null }, cx); }
+  showBranch(cx) { this.reload({ base: this.forkBase, head: "", commit: null }, cx); }
+  showCommit(sha, cx) { this.reload({ commit: sha }, cx); }
+
+  // The Commits tab entry on screen: "uncommitted", "branch", a commit id, or null.
+  viewing() {
+    const s = this.source;
+    if (!s) return null;
+    if (s.commit) return s.commit;
+    if (!s.head && s.base === "HEAD") return "uncommitted";
+    if (!s.head && s.base === this.forkBase) return "branch";
+    return null;
+  }
+
+  // A commit opened on its own (from the Commits tab), not one picked inside a range.
+  loneCommit() {
+    const s = this.source;
+    return Boolean(s?.commit) && !this.commits.some((c) => c.sha === s.commit);
+  }
+
+  setSidebarTab(tab, cx) {
+    this.prefs = { ...this.prefs, sidebar: true, sidebarTab: tab };
+    writePrefs(this.prefs);
+    if (tab === "commits") this.loadRecent(cx);
+    this.rebuild();
+    cx.notify();
+  }
+
   refresh(cx) {
+    if (this.prefs.sidebar && this.prefs.sidebarTab === "commits") this.loadRecent(cx);
     const source = this.source;
     if (!source || source.head || source.commit || this.loading || this.busy) return;
     this.busy = true;
@@ -792,10 +852,11 @@ export default class SnappyDiff extends View {
     const s = this.source;
     if (!s || !props()?.overlay) return;
     const pr = this.prShown() ? this.pr : null;
+    const lone = this.loneCommit();
     run("tab.new", {
-      name: (pr ? `#${pr.number} ${pr.title}` : s.head || "Working tree").slice(0, 30),
+      name: (pr ? `#${pr.number} ${pr.title}` : lone ? `commit ${s.commit.slice(0, 7)}` : s.head || "Working tree").slice(0, 30),
       mod: "github-diff",
-      props: pr ? { repo: s.repo, pr: pr.number } : { repo: s.repo, base: s.base, head: s.head },
+      props: pr ? { repo: s.repo, pr: pr.number } : lone ? { repo: s.repo, commit: s.commit } : { repo: s.repo, base: s.base, head: s.head },
     });
     this.close();
   }
@@ -845,6 +906,7 @@ export default class SnappyDiff extends View {
       "cmd-k": () => this.openPalette("all", cx),
       "cmd-f": () => this.openPalette("lines", cx),
       "t": () => this.openInTab(),
+      "c": () => this.setSidebarTab(this.prefs.sidebarTab === "commits" ? "files" : "commits", cx),
       "shift-/": () => this.openMenu("settings", cx),
       "?": () => this.openMenu("settings", cx),
       "escape": () => (this.only ? this.showAll(cx) : this.close()),
@@ -1147,9 +1209,12 @@ export default class SnappyDiff extends View {
       .child(this.button("sidebar", icon("panel"), (cx) => this.setPref("sidebar", !this.prefs.sidebar, cx)))
       .child(div().mr(4).text_size(14).font_semibold().whitespace_nowrap().child("github diff"))
       .when(Boolean(s), (el) => el
-        .child(picker("base", s.base === git.EMPTY_TREE ? "No commits yet" : s.base, s.base !== git.EMPTY_TREE))
-        .child(this.button("swap", icon("swap"), (cx) => s.head && this.reload({ base: s.head, head: s.base, commit: null }, cx)))
-        .child(picker("head", s.head || "Working tree", Boolean(s.head)))
+        // A commit opened from the Commits tab names itself; base and head don't apply to it.
+        .when(this.loneCommit(), (el) => el.child(this.renderCommitChip(t)))
+        .when(!this.loneCommit(), (el) => el
+          .child(picker("base", s.base === git.EMPTY_TREE ? "No commits yet" : s.base, s.base !== git.EMPTY_TREE))
+          .child(this.button("swap", icon("swap"), (cx) => s.head && this.reload({ base: s.head, head: s.base, commit: null }, cx)))
+          .child(picker("head", s.head || "Working tree", Boolean(s.head))))
         .when(this.commits.length > 1, (el) => el.child(picker("commit", s.commit ? `${s.commit.slice(0, 7)} ${this.commits.find((c) => c.sha === s.commit)?.subject ?? ""}` : `All ${this.commits.length} commits`, false)))
         .child(this.button("reload", icon("reload"), (cx) => this.reload({}, cx)))
         .child(this.button("whitespace", icon("pilcrow"), (cx) => this.reload({ ignoreWhitespace: !s.ignoreWhitespace }, cx), { active: s.ignoreWhitespace }))
@@ -1198,7 +1263,11 @@ export default class SnappyDiff extends View {
       .child(this.button("collapse", icon(files.length && files.every((f) => this.isCollapsed(f)) ? "expand" : "collapse"), (cx) => this.toggleAll(cx)))
       .child(this.button("style", icon(this.prefs.diffStyle === "split" ? "split" : "unified"), (cx) => this.setPref("diffStyle", this.prefs.diffStyle === "split" ? "unified" : "split", cx)))
       .child(this.button("settings", icon("settings"), (cx) => this.openMenu("settings", cx), { active: this.menu === "settings" }))
-      .when(Boolean(s && props()?.overlay), (el) => el.child(this.button("pop-out", icon("pop-out"), () => this.openInTab())));
+      .when(Boolean(s && props()?.overlay), (el) => el.child(this.button("pop-out", icon("pop-out"), () => this.openInTab())))
+      // Closes the dialog, like esc; set apart from the other buttons by a thin line.
+      .when(Boolean(props()?.overlay), (el) => el
+        .child(div().w(1).h(20).mx(4).bg(t.border))
+        .child(this.button("close", icon("x", 14), () => this.close())));
   }
 
   renderMenu(t) {
@@ -1225,11 +1294,69 @@ export default class SnappyDiff extends View {
       .child(panel);
   }
 
+  renderCommitChip(t) {
+    const s = this.source;
+    const c = this.recent.find((r) => r.sha === s.commit);
+    return h_flex().id("commit-chip").h(28).pl(10).pr(3).gap(8).items_center().rounded(6).border_1().border_color(t.border).min_w(0)
+      .child(div().text_color(t.dim).child(icon("history", 12)))
+      .child(div().text_size(12.5).font_family(this.code).child(s.commit.slice(0, 7)))
+      .when(Boolean(c), (el) => el.child(div().max_w(380).truncate().text_size(12.5).text_color(t.muted).child(c.subject)))
+      .child(h_flex().id("commit-chip-close").size(22).flex_none().justify_center().items_center().rounded(4).cursor_pointer().text_color(t.muted)
+        .hover((st) => st.bg(t.hover)).on_click((_e, cx) => this.showWorkingTree(cx)).child(icon("x", 11)));
+  }
+
+  // Two tabs, GitHub-style: Files (the tree) and Commits (what to diff).
   renderSidebar(t, active) {
+    const tab = this.prefs.sidebarTab === "commits" ? "commits" : "files";
+    const item = (id, label, count) => h_flex().id(`side-${id}`).h_full().px(10).gap(6).items_center().cursor_pointer()
+      .text_size(12.5).text_color(tab === id ? t.foreground : t.muted).when(tab === id, (el) => el.font_medium())
+      .border_b_2().border_color(tab === id ? t.gh.tab : t.background)
+      .hover((st) => st.text_color(t.foreground))
+      .on_click((_e, cx) => this.setSidebarTab(id, cx))
+      .child(label)
+      .when(count != null, (el) => el.child(div().px(6).rounded(10).bg(t.raised).text_size(11).text_color(t.muted).child(String(count))));
+    return v_flex().id("sidebar").w(SIDEBAR_W).flex_none().h_full().border_r_1().border_color(t.border)
+      .child(h_flex().id("side-tabs").h(40).flex_none().px(8).gap(2).border_b_1().border_color(t.border)
+        .child(item("files", "Files", this.files.length))
+        .child(item("commits", "Commits", null)))
+      .child(tab === "commits" ? this.renderCommits(t) : this.renderFiles(t, active));
+  }
+
+  // The Commits tab: uncommitted work, the whole branch, then the last commits on HEAD. The
+  // branch's own commits carry a blue dot; a line marks where the branch began.
+  renderCommits(t) {
+    const viewing = this.viewing();
+    const entry = (id, title, detail, dot, pick) => h_flex().id(`entry-${id}`).mx(6).px(8).py(6).gap(10).items_start().rounded(6).cursor_pointer()
+      .when(viewing === id, (el) => el.bg(t.selected)).hover((st) => st.bg(viewing === id ? t.selected : t.hover))
+      .on_click((_e, cx) => pick(cx))
+      .child(div().mt(6).size(8).flex_none().rounded(4).bg(dot))
+      .child(v_flex().flex_1().min_w(0).gap(2)
+        .child(div().truncate().text_size(12.5).text_color(t.foreground).child(title))
+        .child(detail));
+    const dim = (text) => div().truncate().text_size(11).text_color(t.dim).child(text);
+    const label = (text) => div().px(16).pt(12).pb(4).text_size(11).font_medium().text_color(t.dim).child(text);
+    const rows = [entry("uncommitted", "Uncommitted changes", dim("working tree vs HEAD"), t.gh.yellow, (cx) => this.showWorkingTree(cx))];
+    const base = this.forkBase;
+    if (base && base !== "HEAD" && base !== git.EMPTY_TREE) {
+      rows.push(entry("branch", `Whole branch vs ${base.replace(/^origin\//, "")}`, dim("every change since it left the base"), t.gh.blue, (cx) => this.showBranch(cx)));
+    }
+    rows.push(label("Commits"));
+    if (!this.recent.length) rows.push(div().px(16).py(6).text_size(12).text_color(t.dim).child(this.recentHead === null && this.loadingRecent ? "Loading…" : "No commits yet."));
+    const anyOwn = this.recent.some((c) => c.own);
+    this.recent.forEach((c, i) => {
+      if (anyOwn && !c.own && (i === 0 || this.recent[i - 1].own)) rows.push(label("Before this branch"));
+      rows.push(entry(c.sha, c.subject, h_flex().min_w(0).gap(6).text_size(11).text_color(t.dim)
+        .child(div().flex_none().font_family(this.code).child(c.short))
+        .child(div().min_w(0).truncate().child(`${c.author} · ${c.date}`)), c.own ? t.gh.blue : t.border, (cx) => this.showCommit(c.sha, cx)));
+    });
+    return v_flex().id("commits-list").flex_1().min_h(0).overflow_y_scrollbar().py(6).gap(1).children(rows);
+  }
+
+  renderFiles(t, active) {
     const rows = this.tree();
     const shown = this.shown().length;
     const keycap = (k) => div().h(18).min_w(18).px(4).flex().items_center().justify_center().rounded(4).border_1().border_color(t.border).text_size(10.5).text_color(t.muted).child(k);
-    return v_flex().id("sidebar").w(SIDEBAR_W).flex_none().h_full().border_r_1().border_color(t.border)
+    return v_flex().id("files-tab").flex_1().min_h(0)
       .child(v_flex().p(8).gap(6)
         .child(h_flex().id("goto").h(30).px(8).gap(8).items_center().rounded(6).cursor_pointer().text_color(t.muted).hover((s) => s.bg(t.hover))
           .on_click((_e, cx) => this.openPalette("all", cx))
