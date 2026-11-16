@@ -1370,30 +1370,31 @@ export default class SnappyDiff extends View {
     return v_flex().id("commits-list").flex_1().min_h(0).overflow_y_scrollbar().py(6).gap(1).children(rows);
   }
 
-  // GitHub's commit page header, above a commit's diff: the subject, the description, then who
-  // made it and when, with the commit and parent ids. A long description scrolls in its box.
+  // GitHub's commit header, above a commit's diff: the subject, then who made it and when with the
+  // commit and parent ids, all in view; the description last, scrolling in its box when long.
   renderCommitCard(t, code) {
     const c = this.commitInfo;
     const initials = c.author.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
     const lines = c.body ? c.body.split("\n") : [];
     const mono = (text) => div().font_family(code).text_size(12).child(text);
+    const author = h_flex().gap(10).items_center().text_size(12.5).text_color(t.muted)
+      .child(div().size(22).flex_none().flex().items_center().justify_center().rounded(11).bg(t.raised).text_size(10).font_semibold().text_color(t.foreground).child(initials))
+      .child(div().flex_none().font_semibold().text_color(t.foreground).child(c.author))
+      .child(div().min_w(0).truncate().child(`<${c.email}> committed ${c.date} · ${c.when}`))
+      .child(div().flex_1())
+      .child(h_flex().flex_none().gap(6).items_center()
+        .child(div().text_color(t.dim).child("commit")).child(mono(c.short))
+        .when(c.parents.length > 0, (el) => el
+          .child(div().text_color(t.dim).child(c.parents.length > 1 ? "· parents" : "· parent"))
+          .children(c.parents.map((p) => mono(p)))));
     return div().px(CARD_MX).pt(16).flex_none()
       .child(v_flex().rounded(CARD_R).border_1().border_color(t.border).bg(t.gh.subtle)
-        .child(v_flex().px(16).pt(14).pb(12).gap(8)
+        .child(v_flex().px(16).pt(14).pb(12).gap(10)
           .child(div().text_size(15).font_semibold().text_color(t.foreground).child(c.subject))
-          .when(lines.length > 0, (el) => el.child(v_flex().id("commit-body").max_h(180).overflow_y_scrollbar().gap(0)
-            .children(lines.map((text) => div().min_h(18).font_family(code).text_size(12.5).text_color(t.muted).child(text || " "))))))
-        .child(h_flex().px(16).py(10).gap(10).items_center().border_t_1().border_color(t.border).rounded_b(CARD_R - 1).bg(t.background)
-          .text_size(12.5).text_color(t.muted)
-          .child(div().size(22).flex_none().flex().items_center().justify_center().rounded(11).bg(t.raised).text_size(10).font_semibold().text_color(t.foreground).child(initials))
-          .child(div().font_semibold().text_color(t.foreground).child(c.author))
-          .child(div().min_w(0).truncate().child(`<${c.email}> committed ${c.date} · ${c.when}`))
-          .child(div().flex_1())
-          .child(h_flex().flex_none().gap(6).items_center()
-            .child(div().text_color(t.dim).child("commit")).child(mono(c.short))
-            .when(c.parents.length > 0, (el) => el
-              .child(div().text_color(t.dim).child(c.parents.length > 1 ? "· parents" : "· parent"))
-              .children(c.parents.map((p) => mono(p)))))));
+          .child(author))
+        .when(lines.length > 0, (el) => el.child(div().px(16).py(12).border_t_1().border_color(t.border).rounded_b(CARD_R - 1).bg(t.background)
+          .child(v_flex().id("commit-body").max_h(180).overflow_y_scrollbar()
+            .children(lines.map((text) => div().min_h(18).font_family(code).text_size(12.5).text_color(t.muted).child(text || " ")))))));
   }
 
   renderFiles(t, active) {
