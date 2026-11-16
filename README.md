@@ -7,7 +7,7 @@ Um visualizador de diff para o [Herdr app](https://herdr.dev) com a cara da aba 
 ## O que ele faz
 
 - **Todos os arquivos numa rolagem só**, cada um num cartão com borda e cantos arredondados, como no GitHub. O cabeçalho do arquivo atual fica preso no topo enquanto você rola.
-- **Começa no que não foi commitado** (`HEAD` → `Working tree`), com os arquivos novos inclusos. Pelo seletor de base no topo você troca para `main` e vê a branch inteira, como uma PR.
+- **Começa no que não foi commitado** (`HEAD` → `Working tree`), com os arquivos novos inclusos. Sem nada a commitar, mostra a branch inteira como uma PR, contra a branch de onde ela saiu (`homolog` ou `develop` num repo que integra lá, senão `main`). Pelo seletor de base no topo você troca entre os dois.
 - **Cores e fonte do GitHub**: verde e vermelho do GitHub nas linhas, as palavras que mudaram em destaque, sintaxe colorida com a paleta do GitHub, tema claro ou escuro conforme o Herdr. O código usa uma fonte monoespaçada sem ligaduras (`===` e `=>` aparecem como foram digitados).
 - **Unified por padrão**, como no GitHub; um botão na barra troca para split (lado a lado).
 - **Marcar como visto** (`v`): o arquivo recolhe e volta sozinho se mudar de novo.
@@ -86,6 +86,7 @@ Este mod é um fork do [snappy-diff](https://github.com/duartecaldascardoso/cald
 
 - Visual do GitHub: um cartão por arquivo, com espaço entre eles; paleta de diff e de sintaxe do GitHub (Primer), clara e escura; fonte maior (13.5px, linha de 22px) e sem ligaduras.
 - Por padrão mostra só o que não foi commitado (o original compara com o ponto em que a branch saiu da `main`).
+- A base da branch é a que ela deixou por último entre a `origin/HEAD` e os alvos comuns (`homolog`, `develop`, `main`, `master`), e não só a `origin/HEAD`. Num repo cuja `origin/HEAD` é a `main`, mas que recebe as PRs na `homolog`, a comparação não traz os commits que a `main` ainda não tem.
 - Unified por padrão, VS Code como editor padrão.
 - Atalhos com `ctrl` no Linux e no Windows (o original só aceitava `cmd`).
 - Nome próprio (`github-diff`): pode ser instalado junto com o snappy-diff original sem conflito.

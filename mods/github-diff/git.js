@@ -34,15 +34,32 @@ export const toplevel = (dir) => line(dir, ["rev-parse", "--show-toplevel"]);
 
 export const currentBranch = async (repo) => (await line(repo, ["rev-parse", "--abbrev-ref", "HEAD"])) ?? "HEAD";
 
-// The branch a pull request would most likely target.
+// Branches a pull request usually targets, besides origin/HEAD's. Teams that merge into a
+// staging branch (homolog, develop) open their pull requests against it, not the default one.
+const BASE_CANDIDATES = ["origin/homolog", "origin/develop", "origin/main", "origin/master", "main", "master"];
+
+const exists = async (repo, ref) => Boolean(await line(repo, ["rev-parse", "--verify", "--quiet", ref]));
+
+// Commits on HEAD that ref doesn't have: how far the branch walked since it forked from ref.
+async function distance(repo, ref) {
+  const count = await line(repo, ["rev-list", "--count", `${ref}..HEAD`]);
+  return count === null ? Infinity : Number(count);
+}
+
+// The branch a pull request would most likely target: of origin/HEAD's branch and the usual
+// targets, the one HEAD forked from most recently. A tie keeps origin/HEAD's.
 export async function defaultBase(repo) {
   if (!(await hasCommits(repo))) return EMPTY_TREE;
   const remote = await line(repo, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
-  if (remote) return remote;
-  for (const candidate of ["main", "master"]) {
-    if (await line(repo, ["rev-parse", "--verify", "--quiet", candidate])) return candidate;
-  }
-  return "HEAD";
+  const names = [...new Set([remote, ...BASE_CANDIDATES].filter(Boolean))];
+  const found = (await Promise.all(names.map(async (ref) => ((await exists(repo, ref)) ? ref : null)))).filter(Boolean);
+  if (found.length === 0) return "HEAD";
+  const distances = await Promise.all(found.map((ref) => distance(repo, ref)));
+  let best = 0;
+  distances.forEach((count, index) => {
+    if (count < distances[best]) best = index;
+  });
+  return found[best];
 }
 
 export const isDirty = async (repo) => Boolean(await line(repo, ["status", "--porcelain", "--untracked-files=normal"]));
