@@ -2,7 +2,7 @@
 // the window. A fork of snappy-diff by Duarte Cardoso (MIT), with GitHub's look and defaults.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list, VirtualListScrollHandle } from "gpui-base";
-import { props, closeOverlay, focused, notify, agents, panes, hc, appHome, exec, run, settings, theme, fonts } from "herdr";
+import { props, closeOverlay, focused, notify, agents, panes, hc, appHome, exec, run, settings, theme, fonts, shared, layout } from "herdr";
 import * as fs from "fs/promises";
 import * as git from "./git.js";
 import { parsePatch, skippedFiles, firstChange } from "./patch.js";
@@ -15,6 +15,20 @@ import { reviewKey, rangeKey, sinceReview, emptyReview, isViewed, changedSinceVi
 import { DEFAULT_PREFS, readPrefs, writePrefs, readReview, writeReview, readLastReviewed, writeLastReviewed } from "./store.js";
 
 const ICONS = "mods/github-diff/icons";
+
+// Embedded in a layout with props { follow: true } (herdr-devflow's `dev` layout: stack work-main →
+// diff), it shows what shared("diff.target") = { repo, base?, head?, commit?, pr?, view?, at } names
+// and starts over when `at` changes; esc and the Terminal button go back to the terminal.
+const following = () => Boolean(props()?.follow) && !props()?.overlay;
+function findNode(node, id) {
+  if (node?.id === id) return node;
+  for (const child of node?.children ?? []) {
+    const found = findNode(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+const diffShown = () => findNode(layout(), "work-main")?.active === "diff";
 // Local patch (not upstream): GitHub-like sizes, cards and colors. Each file is a card: a gap
 // item, a header with the card's top border, the rows between side borders, then a short foot
 // with the bottom border. INSET is a card's margin plus its border, which clicks account for.
@@ -170,7 +184,14 @@ export default class SnappyDiff extends View {
     this.handle.focus();
     cx.timer.after(300, () => { if (!this.menu && !this.palette && !this.editing) this.handle.focus(); });
 
-    cx.spawn((cx) => this.start(cx));
+    if (following()) {
+      const target = shared("diff.target");
+      this.targetAt = target?.at ?? null;
+      if (target?.repo) cx.spawn((cx) => this.start(cx, target));
+      else Object.assign(this, { loading: false, idle: true });
+    } else {
+      cx.spawn((cx) => this.start(cx));
+    }
     cx.timer.every(REFRESH_MS, (cx) => this.refresh(cx));
   }
 
@@ -182,24 +203,28 @@ export default class SnappyDiff extends View {
 
   // Loading
 
-  async start(cx) {
+  async start(cx, given = props() ?? {}) {
+    const token = (this.startToken = (this.startToken ?? 0) + 1);
+    if (following()) this.handle.focus();
     [this.prefs, this.lastReviewed] = await Promise.all([readPrefs(), readLastReviewed()]);
     // Whoever opened it can name what to show: { repo, base, head } or { repo, pr }. Otherwise
     // the focused terminal's repository.
-    const given = props() ?? {};
     const dir = given.repo ?? focused()?.cwd;
     const repo = dir && await git.toplevel(dir);
+    if (token !== this.startToken) return;
     if (!repo) {
       this.loading = false;
       this.error = "Not in a git repository. Open this from a terminal inside one.";
       return cx.notify();
     }
     const [base, branch, dirty, refs] = await Promise.all([git.defaultBase(repo), git.currentBranch(repo), git.isDirty(repo), git.refs(repo)]);
+    if (token !== this.startToken) return;
     this.refs = refs;
     this.branch = branch;
     this.forkBase = base;
     this.recentRepo = repo;
     this.loadRecent(cx);
+    if (given.view === "commits") this.setSidebarTab("commits", cx);
     if (given.pr) return this.openPullRequest(repo, given.pr, cx);
     // { repo, commit }: one commit on its own, as the Commits tab opens it.
     if (given.commit && !String(given.commit).startsWith("-")) {
@@ -417,7 +442,23 @@ export default class SnappyDiff extends View {
     cx.notify();
   }
 
+  // A new target in a layout: forget the last one's diff before loading the next.
+  reset() {
+    this.rev++;
+    Object.assign(this, {
+      source: null, refs: [], commits: [], files: [], text: "", loading: true, error: null, idle: false, loadingMessage: null,
+      pr: null, threads: [], comments: [], only: null, overview: false, menu: null, palette: null, editing: null,
+      recent: [], recentHead: null, recentRepo: null, commitInfo: null, reviewKey: "", review: emptyReview(),
+    });
+    this.open = new Map();
+    this.expanded = new Map();
+    this.rowsCache = new Map();
+    this.rebuild();
+  }
+
   refresh(cx) {
+    // Hidden behind the terminal in a layout: nothing to keep fresh until it shows again.
+    if (following() && !diffShown()) return;
     if (this.prefs.sidebar && this.prefs.sidebarTab === "commits") this.loadRecent(cx);
     const source = this.source;
     if (!source || source.head || source.commit || this.loading || this.busy) return;
@@ -853,7 +894,12 @@ export default class SnappyDiff extends View {
 
   close() {
     const overlay = props()?.overlay;
-    if (overlay) closeOverlay(overlay);
+    if (overlay) return closeOverlay(overlay);
+    if (!following() || !findNode(layout(), "work-main")) return;
+    run("layout.select", { stack: "work-main", child: "term" });
+    // Give the keyboard back to the terminal that was in front.
+    const pane = focused()?.pane;
+    if (pane) run("pane.focus", { pane });
   }
 
   // t: the review out of the pop-up into its own tab, to keep it open beside the agent. Comments
@@ -1161,6 +1207,14 @@ export default class SnappyDiff extends View {
   // View
 
   render(cx) {
+    if (following()) {
+      const target = shared("diff.target");
+      if (target?.repo && target.at !== this.targetAt) {
+        this.targetAt = target.at;
+        this.reset();
+        cx.spawn((cx) => this.start(cx, target));
+      }
+    }
     const t = github(theme());
     const code = this.code;
     const active = this.activeFile();
@@ -1274,6 +1328,10 @@ export default class SnappyDiff extends View {
       .child(this.button("style", icon(this.prefs.diffStyle === "split" ? "split" : "unified"), (cx) => this.setPref("diffStyle", this.prefs.diffStyle === "split" ? "unified" : "split", cx)))
       .child(this.button("settings", icon("settings"), (cx) => this.openMenu("settings", cx), { active: this.menu === "settings" }))
       .when(Boolean(s && props()?.overlay), (el) => el.child(this.button("pop-out", icon("pop-out"), () => this.openInTab())))
+      // Embedded: back to the terminal, like esc.
+      .when(following(), (el) => el
+        .child(div().w(1).h(20).mx(4).bg(t.border))
+        .child(this.button("to-terminal", ["← Terminal"], () => this.close())))
       // Closes the dialog, like esc; set apart from the other buttons by a thin line.
       .when(Boolean(props()?.overlay), (el) => el
         .child(div().w(1).h(20).mx(4).bg(t.border))
@@ -1485,7 +1543,7 @@ export default class SnappyDiff extends View {
 
   renderEmpty(t) {
     const s = this.source;
-    const message = this.error ?? (this.loading ? this.loadingMessage ?? "Loading…"
+    const message = this.error ?? (this.idle ? "Pick a project or a worktree in the sidebar." : this.loading ? this.loadingMessage ?? "Loading…"
       : s ? (s.commit ? "This commit changes nothing." : s.head ? `No changes between ${s.base} and ${s.head}.` : `No changes against ${s.base}.`) : "");
     return v_flex().size_full().items_center().justify_center().gap(6).p(24)
       .child(div().text_size(14).text_color(this.error ? t.ansi1 : t.muted).child(message))
